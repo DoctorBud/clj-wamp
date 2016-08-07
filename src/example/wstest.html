@@ -1,0 +1,366 @@
+<!doctype html>
+
+<!--
+Simple example using AutobahnJS to connect via WAMPV2 CRA (Challenge Response Authentication)
+to a Clojure server using clj-wamp V2.
+
+This HTML file contains an entire single-page AngularJS web application,
+including the following components:
+  - HTML for layout and UI
+  - JavaScript for behavior
+  - AngularJS for templating, MVC and reactive programming
+  - Twitter Bootstrap for styles and components
+  - AngularUI Bootstrap for Angular-specific Bootstrap implementations.
+  - json-formatter is an Angular directive that makes presenting JSON fun
+All of the above resources are pulled into the browser via CDN, except for
+json-formatter which I'm pulling directly from one of the author's example pages.
+
+This single-file format is pretty useful for educational and illustrative
+purposes, but is impractical for most real applications. Another advantage of
+SFSPWA (Single-File Single-Page Web Application) which makes them ideal for blogging
+and experimentation is that they don't require a web server. Simply opening
+the file in a web browser will be sufficient with Chrome, Safari and Firefox.
+
+We are relying upon ES6 for the class/constructor capability. If you are using
+Firefox, you must have the developer edition, or wait until March 2016 when the
+default FF will support ES6. Because this file does not rely upon a preprocessor
+like Babel, we assume a modern ES6 browser.
+-->
+
+
+<!-- This is all pretty-standard HTML prefix text -->
+
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="description" content="AutobahnV2 JS-to-CLJ-Wamp Test">
+  <meta name="author" content="DoctorBud">
+
+  <title>AutobahnV2 JS-to-CLJ-Wamp Test</title>
+
+  <!-- Include JS and CSS Resources from CDNs -->
+  <!-- We are using AngularJS, AngularUI Bootstrap, and Twitter Bootstrap -->
+  <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.4.5/angular.min.js"></script>
+  <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.4.5/angular-resource.js"></script>
+
+  <script
+    src="https://cdnjs.cloudflare.com/ajax/libs/angular-ui-bootstrap/1.0.3/ui-bootstrap-tpls.min.js">
+  </script>
+  <script
+    src="https://cdnjs.cloudflare.com/ajax/libs/angular-ui-bootstrap/1.0.3/ui-bootstrap-tpls.js">
+  </script>
+  <script
+    src="http://azimi.me/json-formatter/dist/json-formatter.min.js">
+  </script>
+
+  <script>
+    // Set to true for debugging
+    AUTOBAHN_DEBUG = false;
+  </script>
+  <script
+    src="https://autobahn.s3.amazonaws.com/autobahnjs/latest/autobahn.js">
+  </script>
+  <script>
+    console.log("Ok, Autobahn loaded", autobahn.version);
+  </script>
+
+
+  <link
+    rel="stylesheet"
+    href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css"
+    integrity="sha384-1q8mTJOASx8j1Au+a5WDVnPi2lkFfwwEAa8hDDdjZlpLegxhjVME1fgjWPGmkzs7"
+    crossorigin="anonymous">
+  <link
+    rel="stylesheet"
+    href="https://maxcdn.bootstrapcdn.com/bootswatch/3.3.6/readable/bootstrap.min.css"
+    crossorigin="anonymous">
+  <link
+    rel="stylesheet"
+    href="http://azimi.me/json-formatter/dist/json-formatter.min.css"
+    crossorigin="anonymous">
+
+<!--
+Here's our main Angular app definition and the definition of our controllers
+In this example, there is only one controller we are using, and it's called QueryController
+for lack of a better name.
+-->
+
+  <script>
+"use strict";   // This lets us use modern JS features.
+
+class QueryController {
+  constructor($resource, $timeout, $scope, $anchorScroll) {
+    this.$resource = $resource;
+    this.$timeout = $timeout;
+    this.$scope = $scope;
+    this.$anchorScroll = $anchorScroll;
+
+    var that = this;
+    this.username = 'FakeUser';
+    this.password = 'resUekaF';
+    this.broadcastText = 'This text will be broadcast to all sessions';
+    this.logMessages = [];
+
+    this.connection = null;
+    this.connectedSession = null;
+    this.broadcastSubscription = null;
+  }
+
+  log(title, data) {
+    if (typeof title === 'string' || title instanceof String) {
+    }
+    else {
+      data = title;
+      title = '?';
+    }
+
+    console.log(title, data);
+    this.logMessages.push({
+      title: title,
+      data: data});
+    var anchorId = 'anchor-scroll-bottom';
+    this.$anchorScroll(anchorId);
+  }
+
+  getWSURL() {
+    var result = 'ws://127.0.0.1:3000/ws';
+    return result;
+  }
+
+  onBroadcastEvent(args) {
+    var that = this;
+    var msg = args[0];
+    return that.$scope.$apply(function() {
+      that.log('onBroadcastEvent msg', msg);
+    });
+  }
+
+
+  connect() {
+    var useCRA = true;
+    var that = this;
+    var BASE_TOPIC_URI = '';
+    var connectionOpts = {
+                            url: that.getWSURL(),
+                            realm: 'realm1',
+                            max_retries: 25
+                          };
+    this.log('connect() connectionOpts', connectionOpts);
+
+    // This callback is fired during WAMP-CRA authentication
+    // We use the client-provided password to sign the challenge and then respond.
+    // Note that the password is NOT transmitted between client and server.
+    //
+    function onchallenge(session, method, extra) {
+      if (method === "wampcra") {
+        var response = autobahn.auth_cra.sign(that.password, extra.challenge);
+        return response;
+      }
+    }
+
+    if (useCRA) {
+      // the following attributes must be set of WAMP-CRA authentication
+      //
+      connectionOpts.authmethods = ["wampcra"];
+      connectionOpts.authid = this.username;
+      connectionOpts.onchallenge = onchallenge;
+    }
+
+    var connection = new autobahn.Connection(connectionOpts);
+    that.connection = connection;
+    that.log('connect() connection', connection);
+
+    connection.onopen = function(session, details) {
+      that.$scope.$apply(function() {
+        that.log('onopen() session', session);
+        that.log('onopen() details', details);
+
+        // Add CURI prefixes and Subscribe to Broadcast channel
+
+        session.prefix("event", BASE_TOPIC_URI + "event");
+        session.prefix("api",   BASE_TOPIC_URI + "api");
+
+        session.subscribe('event:broadcast',
+          function(topic, event) {
+            that.onBroadcastEvent(topic, event);
+          }).then(
+           function(subscription) {
+              that.$scope.$apply(function() {
+                that.log('subscription to event:broadcast successful!', subscription);
+                that.broadcastSubscription = subscription;
+                that.connectedSession = session;
+              });
+           },
+           function(error) {
+              console.log("subscription failed", error);
+           }
+        );
+      });
+    };
+
+    connection.onclose = function (reason, details) {
+      that.$scope.$apply(function() {
+        that.log('onclose() reason', reason);
+        that.log('onclose() details', details);
+        that.connectedSession = null;
+        that.broadcastSubscription = null;
+      });
+    };
+
+    connection.onevent = function (session) {
+      that.$scope.$apply(function() {
+        that.log('onevent() session', session);
+      });
+    };
+
+    that.log('Opening connection ...');
+    connection.open();
+  };
+
+
+  broadcast() {
+    var that = this;
+    this.log('broadcast() broadcastText', this.broadcastText);
+
+    var msgPacket = {
+      msg: this.broadcastText
+    };
+
+    this.connectedSession.call(
+      'api:broadcast',
+      null,
+      msgPacket).then(
+          function (res) {
+            that.$scope.$apply(function() {
+              that.log('api:broadcast succeeded', res);
+            });
+          },
+          function (res) {
+            that.$scope.$apply(function() {
+              that.log('api:broadcast failed', res);
+            });
+          }
+        );
+  }
+};
+
+
+var app = angular.module('SimpleApp', ['jsonFormatter', 'ngResource', 'ui.bootstrap']);
+app.config(function (JSONFormatterConfigProvider) {
+    JSONFormatterConfigProvider.hoverPreviewEnabled = true;
+  });
+
+app.run(['$anchorScroll', function($anchorScroll) {
+  $anchorScroll.yOffset = 100;   // always scroll by 100 extra pixels
+}]);
+
+app.controller(
+  'QueryController',
+  function ($resource, $timeout, $scope, $anchorScroll) {
+    return new QueryController($resource, $timeout, $scope, $anchorScroll);
+  });
+  </script>
+
+</head>
+
+
+<!--
+Resources have been loaded, Scripts have been defined, let's define the
+page layout and have it hooked up to our controller.
+-->
+
+<body
+  ng-app="SimpleApp">
+
+  <div
+    class="container container-fluid"
+    ng-controller="QueryController as qc">
+
+    <div class="row">
+      <h5 class="col-xs-12 text-center">AutobahnJS WAMPV2 CRA Test</h5>
+    </div>
+
+    <div class="row">
+      <div class="input-group input-group-sm">
+        <span class="input-group-addon" id="username-id">Username</span>
+        <input
+          ng-model="qc.username"
+          type="text"
+          class="form-control"
+          placeholder="Username"
+          aria-describedby="username-id">
+      </div>
+
+      <div class="input-group input-group-sm">
+        <span class="input-group-addon" id="password-id">
+          Password
+        </span>
+        <input
+          ng-model="qc.password"
+          type="text"
+          class="form-control"
+          placeholder="Password"
+          aria-describedby="password-id">
+      </div>
+
+      <div class="col-xs-12">
+        <button
+          ng-disabled="qc.connectedSession"
+          class="btn btn-primary btn-block"
+          ng-click="qc.connect()">
+          Connect
+        </button>
+      </div>
+    </div>
+
+    <hr>
+
+    <div class="row">
+      <div class="input-group input-group-sm">
+        <span class="input-group-addon" id="broadcast-id">Broadcast Text</span>
+        <input
+          type="text"
+          class="form-control"
+          ng-model="qc.broadcastText"
+          placeholder="Message to Broadcast" aria-describedby="broadcast-id">
+      </div>
+
+      <div
+        class="col-xs-12">
+        <button
+          ng-disabled="!qc.connectedSession"
+          class="btn btn-primary btn-block"
+          ng-click="qc.broadcast()">
+          Broadcast
+        </button>
+      </div>
+    </div>
+
+    <hr>
+
+    <div class="row">
+      <div class="col-xs-12 well well-sm">
+        <div class="pre-scrollable">
+          <ul style="font-size:0.8em;">
+            <li
+              ng-repeat="log in qc.logMessages track by $index">
+              <code>{{log.title}}</code>
+              <json-formatter
+                ng-if="log.data"
+                open="1"
+                json="log">
+              </json-formatter>
+            </li>
+          </ul>
+          <br>
+          <br>
+          <br id="anchor-scroll-bottom">
+        </div>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
+
+

@@ -457,9 +457,9 @@
           (do
             (if (or (= authid "validuser") true)
               (let [auth-key  authid
-                    auth-cbs (callbacks :on-auth)
+                    auth-cbs    (callbacks :on-auth)
                     secret-cb   (auth-cbs :secret)
-                    extra "?extra?"
+                    extra       "?extra?"
 
                     auth-secret       (secret-cb sess-id auth-key extra)
                     challenge-value {
